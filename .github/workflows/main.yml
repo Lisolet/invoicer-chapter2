@@ -1,0 +1,49 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  GOPATH: ${{ github.workspace }}/go
+  GOPATH_HEAD: ${{ github.workspace }}/go
+  GOPATH_BASE: ${{ github.workspace }}/go/src/github.com/${{ github.repository_owner }}
+  DOCKER_REPO: ${{ github.repository_owner == 'Securing-DevOps' && 'securingdevops' || env.DOCKER_USER }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: golang:1.10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up environment
+        run: |
+          mkdir -p "${GOPATH_BASE}"
+          mkdir -p "${GOPATH_HEAD}/bin"
+          echo "GOPATH_HEAD=${GOPATH_HEAD}" >> $GITHUB_ENV
+          echo "GOPATH_BASE=${GOPATH_BASE}" >> $GITHUB_ENV
+          echo "DOCKER_REPO=${DOCKER_REPO}" >> $GITHUB_ENV
+
+      - name: Test application
+        run: |
+          go test ./...
+
+      - name: Login to Docker Hub
+        if: github.ref == 'refs/heads/master'
+        run: |
+          echo "${{ secrets.DOCKER_PASS }}" | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin
+
+      - name: Build and push Docker image
+        if: github.ref == 'refs/heads/master'
+        run: |
+          go install --ldflags '-extldflags "-static"' ./...
+          mkdir -p bin
+          cp "${GOPATH_HEAD}/bin/${{ github.event.repository.name }}" bin/invoicer
+          docker build -t ${{ env.DOCKER_REPO }}/${{ github.event.repository.name }} .
+          docker images --no-trunc | awk '/^app/ {print $3}' > docker-image-shasum256.txt
+          docker push ${{ env.DOCKER_REPO }}/${{ github.event.repository.name }}
